@@ -1,0 +1,14 @@
+certs/
+loot/
+report/*.md
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.DS_Store
+.vscode/
+*.log
+/tmp/eapx*
+ad_creds.txt
+captured_hashes.txt
