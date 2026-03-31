@@ -118,6 +118,15 @@ def cmd_attack(args):
             attacks_run.append("RADIUS Cert Clone")
         else:
             attacks_run.append("Cert Clone (failed — using generic)")
+            # Auto-suggest GTC downgrade if not already set
+            if args.negotiate != "gtc-downgrade":
+                try:
+                    switch = input("[?] Switch to GTC downgrade mode for best results? (Y/n): ").strip().lower()
+                    if switch != "n":
+                        args.negotiate = "gtc-downgrade"
+                        print("[+] Switched to GTC downgrade — will capture plaintext passwords")
+                except (KeyboardInterrupt, EOFError):
+                    pass
 
     # ── EAP probe ──
     probe_result = None
