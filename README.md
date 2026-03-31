@@ -18,6 +18,7 @@
 ## Table of Contents
 
 - [Features](#features)
+- [Dual-Interface Architecture](#dual-interface-architecture)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [CLI Reference](#cli-reference)
@@ -55,12 +56,44 @@
 
 ---
 
+## Dual-Interface Architecture
+
+EAPx uses **two separate wireless interfaces** for its full attack pipeline. This is required because `hostapd` locks the AP interface exclusively — you cannot simultaneously run deauth or sniff on the same adapter.
+
+| Interface | Flag | Role | Example |
+|-----------|------|------|---------|
+| **AP Interface** | `-a` / `--iface-ap` | Runs the rogue AP (hostapd) | `wlan1` |
+| **Monitor Interface** | `-m` / `--iface-mon` | Deauth, scanning, EAP probing, identity harvesting | `wlan0mon` |
+
+```
+  ┌──────────────────────────────────────────────┐
+  │              YOUR ATTACK MACHINE             │
+  │                                              │
+  │   ┌──────────────┐    ┌──────────────────┐   │
+  │   │  Adapter #1  │    │   Adapter #2     │   │
+  │   │   wlan1      │    │   wlan0mon       │   │
+  │   │              │    │                  │   │
+  │   │  ► Rogue AP  │    │  ► Deauth        │   │
+  │   │  ► hostapd   │    │  ► Scan          │   │
+  │   │  ► Creds     │    │  ► EAP Probe     │   │
+  │   │    capture   │    │  ► Identity      │   │
+  │   │              │    │    Harvest        │   │
+  │   └──────────────┘    └──────────────────┘   │
+  └──────────────────────────────────────────────┘
+```
+
+> **Note:** Single-purpose subcommands (`scan`, `deauth`, `harvest`, `karma`, `portal`) only need **one** interface and use the familiar `-i` flag. The dual-interface flags (`-a` + `-m`) are only required for the `attack` subcommand.
+
+> **Runtime Validation:** EAPx validates that the two interfaces are **physically distinct** and **exist on the system** before starting any attack. If you accidentally pass the same adapter for both, EAPx will stop and tell you.
+
+---
+
 ## Installation
 
 ### Requirements
 
 - **OS:** Kali Linux (recommended) or any Debian-based distro
-- **Hardware:** Wireless adapter that supports **monitor mode** and **packet injection** (e.g. Alfa AWUS036ACH)
+- **Hardware:** **Two** wireless adapters that support **monitor mode** and **packet injection** (e.g. Alfa AWUS036ACH, TP-Link TL-WN722N v1)
 - **Python:** 3.10+
 - **Privileges:** Root access (required for monitor mode, hostapd, and raw sockets)
 
@@ -98,29 +131,49 @@ sudo python3 eapx.py setup
 
 ## Quick Start
 
-The fastest way to get started is the interactive menu:
+### 1. Prepare Your Adapters
+
+```bash
+# Put one adapter in monitor mode for scanning/deauth
+sudo airmon-ng start wlan0
+# → wlan0mon is now your monitor interface
+
+# The second adapter (e.g. wlan1) will be used as the rogue AP
+# It does NOT need to be in monitor mode — hostapd manages it
+```
+
+### 2. Run the Interactive Menu
 
 ```bash
 sudo python3 eapx.py menu
 ```
 
-This presents a numbered menu where you select an attack mode and provide inputs interactively — no need to remember CLI flags.
+The menu will prompt you for the appropriate interface(s) depending on the attack mode you select.
 
-For more control, use the CLI subcommands documented below.
+### 3. Or Use the CLI Directly
+
+```bash
+# Full auto attack with dual interfaces
+sudo python3 eapx.py attack -a wlan1 -m wlan0mon
+
+# Just scan with a single interface
+sudo python3 eapx.py scan -i wlan0mon
+```
 
 ---
 
 ## CLI Reference
 
-EAPx uses a subcommand-based CLI. Every command (except `setup`, `crack`, and `report`) requires root privileges and a wireless interface in **monitor mode**.
+EAPx uses a subcommand-based CLI. Subcommands that interact with the wireless medium require root privileges.
 
-### Putting Your Adapter in Monitor Mode
-
-Before running any wireless commands, enable monitor mode:
+### Putting Your Adapters in Monitor Mode
 
 ```bash
+# Monitor mode for scanning/deauth adapter
 sudo airmon-ng start wlan0
-# Your interface is now wlan0mon
+# → wlan0mon
+
+# The AP adapter (wlan1) does NOT need monitor mode
 ```
 
 ---
@@ -131,7 +184,7 @@ sudo airmon-ng start wlan0
 sudo python3 eapx.py menu
 ```
 
-Launches a numbered menu that walks you through every attack mode with prompts. Ideal for first-time use. The menu covers all 10 operations: setup, scan, full attack, evil twin, deauth, KARMA, identity harvest, hostile portal, hash cracking, and report generation.
+Launches a numbered menu that walks you through every attack mode with prompts. For the full attack pipeline (options 3 & 4), you will be prompted for **two interfaces** (AP + Monitor). All other modes prompt for a single interface.
 
 ---
 
@@ -192,14 +245,15 @@ Output:
 ### `attack` — Full Attack Pipeline
 
 ```bash
-sudo python3 eapx.py attack -i <interface> [options]
+sudo python3 eapx.py attack -a <ap_interface> -m <monitor_interface> [options]
 ```
 
-This is the **main command** — it chains multiple modules together for a full automated attack. If `--essid` is not provided, it runs an interactive scan first and lets you pick a target.
+This is the **main command** — it chains multiple modules together for a full automated attack. **Requires two separate wireless interfaces.** If `--essid` is not provided, it runs an interactive scan first and lets you pick a target.
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-i`, `--iface` | Monitor-mode interface | *required* |
+| `-a`, `--iface-ap` | Interface for rogue AP (hostapd) | *required* |
+| `-m`, `--iface-mon` | Monitor-mode interface for deauth/scan/harvest | *required* |
 | `--essid` | Target network SSID (skip scan if set) | *auto-scan* |
 | `--bssid` | Target AP BSSID | `None` |
 | `--channel` | Channel to operate on | `6` |
@@ -221,23 +275,24 @@ This is the **main command** — it chains multiple modules together for a full 
 | `gtc-downgrade` | Force clients to downgrade to GTC (captures plaintext passwords) |
 | `default` | Standard MSCHAPV2/MD5 only |
 
-**Example — Full auto attack with scan:**
+**Example — Full auto attack with scan (dual-interface):**
 ```bash
-sudo python3 eapx.py attack -i wlan0mon
-# → Scans → Select target → Probes EAP → Deauths → Launches evil twin
+sudo python3 eapx.py attack -a wlan1 -m wlan0mon
+# → Scans on wlan0mon → Select target → Probes EAP via wlan0mon
+#   → Deauths via wlan0mon → Launches evil twin on wlan1
 #   → Harvests identities → Auto-cracks hashes → Generates report
 ```
 
 **Example — Targeted attack, no deauth:**
 ```bash
-sudo python3 eapx.py attack -i wlan0mon \
+sudo python3 eapx.py attack -a wlan1 -m wlan0mon \
   --essid "CorpWiFi" --bssid AA:BB:CC:DD:EE:FF \
   --channel 6 --negotiate gtc-downgrade --no-deauth
 ```
 
 **Example — Minimal evil twin only:**
 ```bash
-sudo python3 eapx.py attack -i wlan0mon \
+sudo python3 eapx.py attack -a wlan1 -m wlan0mon \
   --essid "CorpWiFi" --channel 6 \
   --no-deauth --no-probe --no-harvest --no-autocrack --no-report
 ```
@@ -313,18 +368,18 @@ sudo python3 eapx.py karma -i <interface>
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-i`, `--iface` | Monitor-mode interface | *required* |
+| `-i`, `--iface` | Wireless interface for AP | *required* |
 
 Listens for 802.11 probe requests and automatically spawns a fake WPA2-Enterprise AP for **every SSID** a client is looking for. Runs until you press Ctrl+C.
 
 **Example:**
 ```bash
-sudo python3 eapx.py karma -i wlan0mon
+sudo python3 eapx.py karma -i wlan1
 ```
 
 Output:
 ```
-[*] KARMA active on wlan0mon — listening for all probe requests...
+[*] KARMA active on wlan1 — listening for all probe requests...
 
 [KARMA] Probe → SSID: 'CorpWiFi' | MAC: AA:BB:CC:DD:EE:FF
 [KARMA] AP spawned for 'CorpWiFi'
@@ -342,7 +397,7 @@ sudo python3 eapx.py portal -i <interface> --essid <SSID> [--channel <ch>]
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-i`, `--iface` | Monitor-mode interface | *required* |
+| `-i`, `--iface` | Interface for rogue AP | *required* |
 | `--essid` | SSID for the open rogue AP | *required* |
 | `--channel` | Channel | `6` |
 
@@ -350,7 +405,7 @@ Launches an **open** rogue AP and serves a fake corporate login page on port 80.
 
 **Example:**
 ```bash
-sudo python3 eapx.py portal -i wlan0mon --essid "Guest-WiFi" --channel 1
+sudo python3 eapx.py portal -i wlan1 --essid "Guest-WiFi" --channel 1
 ```
 
 Output:
@@ -422,13 +477,22 @@ sudo python3 eapx.py report --essid "CorpWiFi" --bssid AA:BB:CC:DD:EE:FF
 
 ## Attack Workflow
 
-Here's the typical flow during a WPA2-Enterprise pentest:
+Here's the typical flow during a WPA2-Enterprise pentest with dual interfaces:
 
 ```
+                    ┌─────────────────────────────────────────┐
+                    │          ADAPTER ASSIGNMENT              │
+                    │                                         │
+                    │  wlan0mon (-m) ──► Scan, Deauth, Probe, │
+                    │                    Harvest               │
+                    │  wlan1    (-a) ──► Rogue AP, Creds       │
+                    └─────────────────────────────────────────┘
+
 ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
 │  1. Setup   │ ──▶ │   2. Scan    │ ──▶ │  3. Probe    │
 │ (certs/deps)│     │ (find MGT    │     │ (fingerprint │
 │             │     │  networks)   │     │  EAP methods)│
+│             │     │  [wlan0mon]  │     │  [wlan0mon]  │
 └─────────────┘     └──────────────┘     └──────────────┘
                                                 │
                     ┌──────────────┐             ▼
@@ -436,6 +500,7 @@ Here's the typical flow during a WPA2-Enterprise pentest:
                     │  Twin AP     │ ◀── │  4. Deauth   │
                     │ (rogue       │     │ (force client │
                     │  RADIUS)     │     │  reconnection)│
+                    │  [wlan1]     │     │  [wlan0mon]  │
                     └──────┬───────┘     └──────────────┘
                            │
               ┌────────────┼────────────┐
@@ -443,6 +508,7 @@ Here's the typical flow during a WPA2-Enterprise pentest:
        ┌───────────┐ ┌──────────┐ ┌──────────┐
        │ Harvest   │ │ Capture  │ │ Portal   │
        │ Identities│ │ Hashes   │ │ Phish    │
+       │ [wlan0mon]│ │ [wlan1]  │ │ [wlan1]  │
        └───────────┘ └────┬─────┘ └──────────┘
                           ▼
                     ┌──────────┐     ┌──────────┐
@@ -504,4 +570,3 @@ Reports are saved to `report/pentest_<ESSID>_<timestamp>.md`.
 ## License
 
 This project is for **educational and authorized testing purposes only**.
-# eapx
