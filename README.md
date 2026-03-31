@@ -563,7 +563,7 @@ Reports are saved to `report/pentest_<ESSID>_<timestamp>.md`.
 
 ## Author
 
-**Aryan Shetty** — [@babySAMRAT](https://github.com/babySAMRAT)
+**Aryan Shetty** — [@babySAMRAT](https://github.com/bxbySAMRAT)
 
 ---
 
