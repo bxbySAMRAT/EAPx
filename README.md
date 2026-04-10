@@ -140,7 +140,7 @@ EAPx uses **two separate wireless interfaces** for its full attack pipeline.
 ### Quick Install
 
 ```bash
-git clone https://github.com/bxbySAMRAT/eapx.git
+git clone https://github.com/babySAMRAT/eapx.git
 cd eapx
 sudo bash install.sh
 ```
@@ -472,7 +472,7 @@ Reports are saved to `report/`:
 
 ## Author
 
-**Aryan Shetty** — [@bxbySAMRAT](https://github.com/bxbySAMRAT)
+**Aryan Shetty** — [@babySAMRAT](https://github.com/babySAMRAT)
 
 ---
 
